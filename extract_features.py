@@ -24,6 +24,7 @@ import json
 import re
 
 import modeling
+import numpy as np
 import tokenization
 import tensorflow as tf
 
@@ -76,6 +77,10 @@ flags.DEFINE_bool(
     "If True, tf.one_hot will be used for embedding lookups, otherwise "
     "tf.nn.embedding_lookup will be used. On TPUs, this should be True "
     "since it is much faster.")
+
+flags.DEFINE_bool(
+    "average_features", False,
+    "Whether to average features of all specified layers.")
 
 
 class InputExample(object):
@@ -396,15 +401,24 @@ def main(_):
         all_layers = []
         for (j, layer_index) in enumerate(layer_indexes):
           layer_output = result["layer_output_%d" % j]
-          layers = collections.OrderedDict()
-          layers["index"] = layer_index
-          layers["values"] = [
-              round(float(x), 6) for x in layer_output[i:(i + 1)].flat
-          ]
-          all_layers.append(layers)
+          if not FLAGS.average_features:
+            layers = collections.OrderedDict()
+            layers["index"] = layer_index
+            layers["values"] = [
+                round(float(x), 6) for x in layer_output[i:(i + 1)].flat
+            ]
+            all_layers.append(layers)
+          else:
+            values = [x for x in layer_output[i:(i + 1)].flat]
+            all_layers.append(values)
         features = collections.OrderedDict()
         features["token"] = token
-        features["layers"] = all_layers
+        if not FLAGS.average_features:
+          features["layers"] = all_layers
+        else:
+          # compute average for all layers
+          average = [round(float(x), 6) for x in np.mean(all_layers, axis=0)]
+          features["average"] = average
         all_features.append(features)
       output_json["features"] = all_features
       writer.write(json.dumps(output_json) + "\n")
