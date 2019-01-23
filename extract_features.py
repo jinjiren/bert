@@ -26,6 +26,8 @@ import re
 import modeling
 import tokenization
 import tensorflow as tf
+import numpy as np
+from tqdm import tqdm
 
 flags = tf.flags
 
@@ -211,12 +213,19 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
   """Loads a data file into a list of `InputBatch`s."""
 
   features = []
+  # save all tokens for future use
+  tokens_list = []
   for (ex_index, example) in enumerate(examples):
-    tokens_a = tokenizer.tokenize(example.text_a)
+    # tokens_a = tokenizer.tokenize(example.text_a)
+    tokens_a = example.text_a.split(' ')
+    # customize: we always have "|||", even if only the 1st sentence is used
+    if r'|||' in tokens_a:
+      tokens_a.remove(r'|||')
 
     tokens_b = None
     if example.text_b:
-      tokens_b = tokenizer.tokenize(example.text_b)
+      # tokens_b = tokenizer.tokenize(example.text_b)
+      tokens_b = example.text_b.split(' ')
 
     if tokens_b:
       # Modifies `tokens_a` and `tokens_b` in place so that the total
@@ -289,6 +298,7 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
       tf.logging.info(
           "input_type_ids: %s" % " ".join([str(x) for x in input_type_ids]))
 
+    tokens_list.append(tokens)
     features.append(
         InputFeatures(
             unique_id=example.unique_id,
@@ -296,7 +306,7 @@ def convert_examples_to_features(examples, seq_length, tokenizer):
             input_ids=input_ids,
             input_mask=input_mask,
             input_type_ids=input_type_ids))
-  return features
+  return features, tokens_list
 
 
 def _truncate_seq_pair(tokens_a, tokens_b, max_length):
@@ -359,7 +369,7 @@ def main(_):
 
   examples = read_examples(FLAGS.input_file)
 
-  features = convert_examples_to_features(
+  features, tokens_list = convert_examples_to_features(
       examples=examples, seq_length=FLAGS.max_seq_length, tokenizer=tokenizer)
 
   unique_id_to_feature = {}
@@ -386,7 +396,7 @@ def main(_):
 
   with codecs.getwriter("utf-8")(tf.gfile.Open(FLAGS.output_file,
                                                "w")) as writer:
-    for result in estimator.predict(input_fn, yield_single_examples=True):
+    for result in tqdm(estimator.predict(input_fn, yield_single_examples=True)):
       unique_id = int(result["unique_id"])
       feature = unique_id_to_feature[unique_id]
       output_json = collections.OrderedDict()
@@ -396,15 +406,19 @@ def main(_):
         all_layers = []
         for (j, layer_index) in enumerate(layer_indexes):
           layer_output = result["layer_output_%d" % j]
-          layers = collections.OrderedDict()
-          layers["index"] = layer_index
-          layers["values"] = [
-              round(float(x), 6) for x in layer_output[i:(i + 1)].flat
-          ]
-          all_layers.append(layers)
+          #layers = collections.OrderedDict()
+          #layers["index"] = layer_index
+          #layers["values"] = [
+          #    round(float(x), 6) for x in layer_output[i:(i + 1)].flat
+          #]
+          # all_layers.append(layers)
+          values = [x for x in layer_output[i:(i + 1)].flat]
+          all_layers.append(values)
         features = collections.OrderedDict()
         features["token"] = token
-        features["layers"] = all_layers
+        # compute average for all layers
+        average = [round(float(x), 6) for x in np.mean(all_layers, axis=0)]
+        features["average"] = average
         all_features.append(features)
       output_json["features"] = all_features
       writer.write(json.dumps(output_json) + "\n")
